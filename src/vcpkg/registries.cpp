@@ -1374,4 +1374,17 @@ namespace vcpkg
 
         return sv.size() == 40 && std::all_of(sv.begin(), sv.end(), is_lcase_ascii_hex);
     }
+
+
+
+
+    std::unique_ptr<RegistryImplementation> RegistryFactory::CreateGitRegistry(const std::string& repo, const std::string& baseline){
+        return std::make_unique<GitRegistry>(std::string{repo}, std::string{baseline});
+    }
+    std::unique_ptr<RegistryImplementation> RegistryFactory::CreateFilesystemRegistry(const path& root, const std::string& baseline){
+        return std::make_unique<FilesystemRegistry>(path{root}, std::string{baseline});
+    }
+    std::unique_ptr<RegistryImplementation> RegistryFactory::CreateBuiltinRegistry(const std::string& baseline){
+        return std::make_unique<BuiltinRegistry>(std::string{baseline});
+    }
 }

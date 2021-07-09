@@ -140,4 +140,11 @@ namespace vcpkg
     bool is_git_commit_sha(StringView sv);
 
     Json::Object serialize_registry_set(const RegistrySet& config);
+
+
+    struct RegistryFactory {
+        static std::unique_ptr<RegistryImplementation> CreateGitRegistry(const std::string& repo, const std::string& baseline);
+        static std::unique_ptr<RegistryImplementation> CreateFilesystemRegistry(const path& root, const std::string& baseline);
+        static std::unique_ptr<RegistryImplementation> CreateBuiltinRegistry(const std::string& baseline);
+    };
 }
