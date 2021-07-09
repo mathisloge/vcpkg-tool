@@ -77,7 +77,12 @@ namespace
             auto& reg_arr = obj.insert(ConfigurationDeserializer::REGISTRIES, Json::Array());
             for (const auto& reg : reg_view)
             {
-                reg_arr.push_back(reg.implementation().serialize());
+                auto reg_json = reg.implementation().serialize();
+                auto& pack_arr = reg_json.insert("packages", Json::Array());
+                for(const auto& pack : reg.packages()) {
+                    pack_arr.push_back(Json::Value::string(pack));
+                }
+                reg_arr.push_back(std::move(reg_json));
             }
         }
         return obj;
