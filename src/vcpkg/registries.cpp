@@ -62,6 +62,8 @@ namespace
 
         Optional<VersionT> get_baseline_version(const VcpkgPaths&, StringView) const override;
 
+        ExpectedS<path> get_version_path(const VcpkgPaths& paths) const override;
+
         Json::Object serialize() const override;
 
     private:
@@ -218,6 +220,8 @@ namespace
 
         Optional<VersionT> get_baseline_version(const VcpkgPaths& paths, StringView port_name) const override;
 
+        ExpectedS<path> get_version_path(const VcpkgPaths& paths) const override;
+
         Json::Object serialize() const override;
 
         ~BuiltinRegistry() = default;
@@ -240,6 +244,8 @@ namespace
         void get_all_port_names(std::vector<std::string>&, const VcpkgPaths&) const override;
 
         Optional<VersionT> get_baseline_version(const VcpkgPaths&, StringView) const override;
+
+        ExpectedS<path> get_version_path(const VcpkgPaths& paths) const override;
 
         Json::Object serialize() const override;
 
@@ -447,6 +453,11 @@ namespace
         Checks::exit_maybe_upgrade(VCPKG_LINE_INFO, "Error: failed to load port from %s", vcpkg::u8string(port_path));
     }
 
+    ExpectedS<path> BuiltinRegistry::get_version_path(const VcpkgPaths& paths) const
+    {
+        return paths.builtin_registry_versions;
+    }
+
     void BuiltinRegistry::get_all_port_names(std::vector<std::string>& out, const VcpkgPaths& paths) const
     {
         const auto& fs = paths.get_filesystem();
@@ -530,6 +541,11 @@ namespace
             res->version_paths.push_back(std::move(version_entry.p));
         }
         return res;
+    }
+
+    ExpectedS<path> FilesystemRegistry::get_version_path(const VcpkgPaths& paths) const
+    {
+        return m_path / registry_versions_dir_name;
     }
 
     void FilesystemRegistry::get_all_port_names(std::vector<std::string>& out, const VcpkgPaths& paths) const
@@ -643,6 +659,11 @@ namespace
         return nullopt;
     }
 
+    ExpectedS<path> GitRegistry::get_version_path(const VcpkgPaths& paths) const 
+    {
+        return get_versions_tree_path(paths);
+    }
+   
     void GitRegistry::get_all_port_names(std::vector<std::string>& out, const VcpkgPaths& paths) const
     {
         auto versions_path = get_versions_tree_path(paths);
