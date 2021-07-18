@@ -63,13 +63,13 @@ namespace vcpkg::Build
                                       Triplet host_triplet,
                                       const SourceControlFileLocation& scfl,
                                       const PathsPortFileProvider& provider,
-                                      IBinaryProvider& binaryprovider,
+                                      BinaryCache& binary_cache,
                                       const IBuildLogsRecorder& build_logs_recorder,
                                       const VcpkgPaths& paths)
     {
         Checks::exit_with_code(
             VCPKG_LINE_INFO,
-            perform_ex(args, full_spec, host_triplet, scfl, provider, binaryprovider, build_logs_recorder, paths));
+            perform_ex(args, full_spec, host_triplet, scfl, provider, binary_cache, build_logs_recorder, paths));
     }
 
     const CommandStructure COMMAND_STRUCTURE = {
@@ -93,7 +93,7 @@ namespace vcpkg::Build
                             Triplet host_triplet,
                             const SourceControlFileLocation& scfl,
                             const PathsPortFileProvider& provider,
-                            IBinaryProvider& binaryprovider,
+                            BinaryCache& binary_cache,
                             const IBuildLogsRecorder& build_logs_recorder,
                             const VcpkgPaths& paths)
     {
@@ -144,7 +144,7 @@ namespace vcpkg::Build
         action->build_options.clean_packages = CleanPackages::NO;
 
         const auto build_timer = Chrono::ElapsedTimer::create_started();
-        const auto result = Build::build_package(args, paths, *action, binaryprovider, build_logs_recorder, status_db);
+        const auto result = Build::build_package(args, paths, *action, binary_cache, build_logs_recorder, status_db);
         print2("Elapsed time for package ", spec, ": ", build_timer, '\n');
 
         if (result.code == BuildResult::CASCADED_DUE_TO_MISSING_DEPENDENCIES)
@@ -180,8 +180,7 @@ namespace vcpkg::Build
         const ParsedArguments options = args.parse_arguments(COMMAND_STRUCTURE);
         std::string first_arg = args.command_arguments.at(0);
 
-        auto binaryprovider = create_binary_provider_from_configs(args.binary_sources).value_or_exit(VCPKG_LINE_INFO);
-
+        BinaryCache binary_cache{args};
         const FullPackageSpec spec = Input::check_and_get_full_package_spec(
             std::move(first_arg), default_triplet, COMMAND_STRUCTURE.example_text);
 
@@ -194,14 +193,8 @@ namespace vcpkg::Build
         Checks::check_maybe_upgrade(VCPKG_LINE_INFO, scfl != nullptr, "Error: Couldn't find port '%s'", port_name);
         ASSUME(scfl != nullptr);
 
-        return perform_ex(args,
-                          spec,
-                          host_triplet,
-                          *scfl,
-                          provider,
-                          args.binary_caching_enabled() ? *binaryprovider : null_binary_provider(),
-                          Build::null_build_logs_recorder(),
-                          paths);
+        return perform_ex(
+            args, spec, host_triplet, *scfl, provider, binary_cache, Build::null_build_logs_recorder(), paths);
     }
 
     void BuildCommand::perform_and_exit(const VcpkgCmdArguments& args,
@@ -693,36 +686,41 @@ namespace vcpkg::Build
                                err.value());
         }
         auto stdoutlog = buildpath / ("stdout-" + triplet.canonical_name() + ".log");
-        std::ofstream out_file(stdoutlog.native().c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
-        Checks::check_exit(VCPKG_LINE_INFO, out_file, "Failed to open '%s' for writing", vcpkg::u8string(stdoutlog));
         CompilerInfo compiler_info;
         std::string buf;
-        int rc = cmd_execute_and_stream_lines(
-            command,
-            [&](StringView s) {
-                static const StringLiteral s_hash_marker = "#COMPILER_HASH#";
-                if (Strings::starts_with(s, s_hash_marker))
-                {
-                    compiler_info.hash = s.data() + s_hash_marker.size();
-                }
-                static const StringLiteral s_version_marker = "#COMPILER_CXX_VERSION#";
-                if (Strings::starts_with(s, s_version_marker))
-                {
-                    compiler_info.version = s.data() + s_version_marker.size();
-                }
-                static const StringLiteral s_id_marker = "#COMPILER_CXX_ID#";
-                if (Strings::starts_with(s, s_id_marker))
-                {
-                    compiler_info.id = s.data() + s_id_marker.size();
-                }
-                Debug::print(s, '\n');
-                Strings::append(buf, s, '\n');
-                out_file.write(s.data(), s.size()).put('\n');
-                Checks::check_exit(
-                    VCPKG_LINE_INFO, out_file, "Error occurred while writing '%s'", vcpkg::u8string(stdoutlog));
-            },
-            env);
-        out_file.close();
+
+        int rc;
+        {
+            const auto out_file = fs.open_for_write(VCPKG_LINE_INFO, stdoutlog);
+            rc = cmd_execute_and_stream_lines(
+                command,
+                [&](StringView s) {
+                    static const StringLiteral s_hash_marker = "#COMPILER_HASH#";
+                    if (Strings::starts_with(s, s_hash_marker))
+                    {
+                        compiler_info.hash = s.substr(s_hash_marker.size()).to_string();
+                    }
+                    static const StringLiteral s_version_marker = "#COMPILER_CXX_VERSION#";
+                    if (Strings::starts_with(s, s_version_marker))
+                    {
+                        compiler_info.version = s.substr(s_version_marker.size()).to_string();
+                    }
+                    static const StringLiteral s_id_marker = "#COMPILER_CXX_ID#";
+                    if (Strings::starts_with(s, s_id_marker))
+                    {
+                        compiler_info.id = s.substr(s_id_marker.size()).to_string();
+                    }
+                    Debug::print(s, '\n');
+                    const auto old_buf_size = buf.size();
+                    Strings::append(buf, s, '\n');
+                    const auto write_size = buf.size() - old_buf_size;
+                    Checks::check_exit(VCPKG_LINE_INFO,
+                                       out_file.write(buf.c_str() + old_buf_size, 1, write_size) == write_size,
+                                       "Error occurred while writing '%s'",
+                                       u8string(stdoutlog));
+                },
+                env);
+        } // close out_file
 
         if (compiler_info.hash.empty() || rc != 0)
         {
@@ -921,18 +919,20 @@ namespace vcpkg::Build
                                err.value());
         }
         auto stdoutlog = buildpath / ("stdout-" + action.spec.triplet().canonical_name() + ".log");
-        std::ofstream out_file(stdoutlog.native().c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
-        Checks::check_exit(VCPKG_LINE_INFO, out_file, "Failed to open '%s' for writing", vcpkg::u8string(stdoutlog));
-        const int return_code = cmd_execute_and_stream_data(
-            command,
-            [&](StringView sv) {
-                print2(sv);
-                out_file.write(sv.data(), sv.size());
-                Checks::check_exit(
-                    VCPKG_LINE_INFO, out_file, "Error occurred while writing '%s'", vcpkg::u8string(stdoutlog));
-            },
-            env);
-        out_file.close();
+        int return_code;
+        {
+            auto out_file = fs.open_for_write(VCPKG_LINE_INFO, stdoutlog);
+            return_code = cmd_execute_and_stream_data(
+                command,
+                [&](StringView sv) {
+                    print2(sv);
+                    Checks::check_exit(VCPKG_LINE_INFO,
+                                       out_file.write(sv.data(), 1, sv.size()) == sv.size(),
+                                       "Error occurred while writing '%s'",
+                                       u8string(stdoutlog));
+                },
+                env);
+        } // close out_file
 
         // With the exception of empty packages, builds in "Download Mode" always result in failure.
         if (action.build_options.only_downloads == Build::OnlyDownloads::YES)
@@ -1235,7 +1235,7 @@ namespace vcpkg::Build
     ExtendedBuildResult build_package(const VcpkgCmdArguments& args,
                                       const VcpkgPaths& paths,
                                       const Dependencies::InstallPlanAction& action,
-                                      IBinaryProvider& binaries_provider,
+                                      BinaryCache& binary_cache,
                                       const IBuildLogsRecorder& build_logs_recorder,
                                       const StatusParagraphs& status_db)
     {
@@ -1284,24 +1284,18 @@ namespace vcpkg::Build
 
         const path abi_package_dir = paths.package_dir(spec) / "share" / spec.name();
         const path abi_file_in_package = paths.package_dir(spec) / "share" / spec.name() / "vcpkg_abi_info.txt";
-        if (action.has_package_abi())
+        auto restore = binary_cache.try_restore(paths, action);
+        if (restore == RestoreResult::restored)
         {
-            auto restore = binaries_provider.try_restore(paths, action);
-            if (restore == RestoreResult::build_failed)
-            {
-                return BuildResult::BUILD_FAILED;
-            }
-            else if (restore == RestoreResult::success)
-            {
-                auto maybe_bcf = Paragraphs::try_load_cached_package(paths, spec);
-                auto bcf = std::make_unique<BinaryControlFile>(std::move(maybe_bcf).value_or_exit(VCPKG_LINE_INFO));
-                return {BuildResult::SUCCEEDED, std::move(bcf)};
-            }
-            else
-            {
-                // missing package, proceed to build.
-            }
+            auto maybe_bcf = Paragraphs::try_load_cached_package(paths, spec);
+            auto bcf = std::make_unique<BinaryControlFile>(std::move(maybe_bcf).value_or_exit(VCPKG_LINE_INFO));
+            return {BuildResult::SUCCEEDED, std::move(bcf)};
         }
+        else
+        {
+            // missing package, proceed to build.
+        }
+
         if (action.build_options.build_missing == BuildMissing::NO)
         {
             return BuildResult::CACHE_MISSING;
@@ -1332,9 +1326,9 @@ namespace vcpkg::Build
                                                       ec.value()));
         }
 
-        if (action.has_package_abi() && result.code == BuildResult::SUCCEEDED)
+        if (result.code == BuildResult::SUCCEEDED)
         {
-            binaries_provider.push_success(paths, action);
+            binary_cache.push_success(paths, action);
         }
 
         return result;
