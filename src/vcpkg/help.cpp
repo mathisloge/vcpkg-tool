@@ -51,9 +51,6 @@ namespace vcpkg::Help
                  "your project from within your manifest file.");
         tbl.blank();
         tbl.blank();
-        tbl.text("** This feature is experimental and requires `--feature-flags=versions` **");
-        tbl.blank();
-        tbl.blank();
         tbl.header("Versions in vcpkg come in four primary flavors");
         tbl.format("version", "A dot-separated sequence of numbers (1.2.3.4)");
         tbl.format("version-date", "A date (2021-01-01.5)");
@@ -71,9 +68,9 @@ namespace vcpkg::Help
         tbl.header("Manifests can place three kinds of constraints upon the versions used");
         tbl.format("builtin-baseline",
                    "The baseline references a commit within the vcpkg repository that establishes a minimum version on "
-                   "every dependency in the graph. If no other constraints are specified (directly or transitively), "
-                   "then the version from the baseline of the top level manifest will be used. Baselines of transitive "
-                   "dependencies are ignored.");
+                   "every dependency in the graph. For example, if no other constraints are specified (directly or "
+                   "transitively), then the version will resolve to the baseline of the top level manifest. Baselines "
+                   "of transitive dependencies are ignored.");
         tbl.blank();
         tbl.format("version>=",
                    "Within the \"dependencies\" field, each dependency can have a minimum constraint listed. These "

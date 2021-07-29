@@ -88,7 +88,7 @@ if(NOT DEFINED VCPKG_VERSION OR VCPKG_VERSION STREQUAL "")
     set(VCPKG_VERSION "unknownhash")
 endif()
 
-set(VCPKG_BASE_VERSION "2021-07-21")
+set(VCPKG_BASE_VERSION "2021-07-26")
 
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -114,7 +114,7 @@ endif()
 
 # === Target: vcpkglib ===
 
-add_library(vcpkglib
+add_library(vcpkglib OBJECT
     ${VCPKGLIB_BASE_SOURCES}
     ${VCPKGLIB_SOURCES}
     ${VCPKGLIB_BASE_INCLUDES}
@@ -212,7 +212,7 @@ if(VCPKG_BUILD_TLS12_DOWNLOADER)
     add_executable(tls12-download ${TLS12_DOWNLOAD_SOURCES})
     set_property(TARGET tls12-download PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET tls12-download APPEND PROPERTY LINK_OPTIONS "$<IF:$<CONFIG:Debug>,,/ENTRY:entry>")
-    target_link_libraries(tls12-download winhttp)
+    target_link_libraries(tls12-download winhttp wintrust)
 endif()
 
 

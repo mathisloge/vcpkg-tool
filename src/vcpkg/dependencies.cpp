@@ -1173,7 +1173,7 @@ namespace vcpkg::Dependencies
         if (!remove_specs.empty())
         {
             std::string msg = "The following packages will be removed:\n";
-            for (auto spec : remove_specs)
+            for (auto&& spec : remove_specs)
             {
                 Strings::append(msg, to_output_string(RequestType::USER_REQUESTED, spec.to_string()), '\n');
             }
@@ -1275,6 +1275,7 @@ namespace vcpkg::Dependencies
                 Optional<std::unique_ptr<VersionSchemeInfo>> date;
                 std::set<std::string> features;
                 bool default_features = true;
+                bool user_requested = false;
 
                 VersionSchemeInfo* get_node(const Versions::Version& ver);
                 VersionSchemeInfo& emplace_node(Versions::Scheme scheme, const Versions::Version& ver);
@@ -1738,6 +1739,7 @@ namespace vcpkg::Dependencies
                 auto spec = dep_to_spec(dep);
 
                 auto& node = emplace_package(spec);
+                node.second.user_requested = true;
 
                 auto maybe_overlay = m_o_provider.get_control_file(dep.name);
                 auto over_it = m_overrides.find(dep.name);
@@ -1846,6 +1848,9 @@ namespace vcpkg::Dependencies
                 "\n\nSee `vcpkg help versioning` for more information.");
         }
 
+        // This function is called after all versioning constraints have been resolved. It is responsible for
+        // serializing out the final execution graph and performing all final validations (such as all required
+        // features being selected and present)
         ExpectedS<ActionPlan> VersionedPackageGraph::finalize_extract_plan(const PackageSpec& toplevel)
         {
             if (m_errors.size() > 0)
@@ -1866,7 +1871,8 @@ namespace vcpkg::Dependencies
 
             auto push = [&emitted, this, &stack](const PackageSpec& spec,
                                                  const Versions::Version& new_ver,
-                                                 const PackageSpec& origin) -> Optional<std::string> {
+                                                 const PackageSpec& origin,
+                                                 View<std::string> features) -> Optional<std::string> {
                 auto&& node = m_graph[spec];
                 auto overlay = m_o_provider.get_control_file(spec.name());
                 auto over_it = m_overrides.find(spec.name());
@@ -1888,6 +1894,15 @@ namespace vcpkg::Dependencies
                         new_ver,
                         "\nThis is an internal vcpkg error. Please open an issue on https://github.com/Microsoft/vcpkg "
                         "with detailed steps to reproduce the problem.");
+                }
+
+                for (auto&& f : features)
+                {
+                    if (f != "core" && !p_vnode->scfl->source_control_file->find_feature(f))
+                    {
+                        return Strings::concat(
+                            "Error: ", spec, "@", new_ver, " does not have required feature ", f, "\n");
+                    }
                 }
 
                 auto p = emitted.emplace(spec, nullptr);
@@ -1912,8 +1927,12 @@ namespace vcpkg::Dependencies
                     // -> Add stack frame
                     auto maybe_vars = m_var_provider.get_dep_info_vars(spec);
 
-                    InstallPlanAction ipa(
-                        spec, *p_vnode->scfl, RequestType::USER_REQUESTED, m_host_triplet, std::move(p_vnode->deps));
+                    InstallPlanAction ipa(spec,
+                                          *p_vnode->scfl,
+                                          node.user_requested ? RequestType::USER_REQUESTED
+                                                              : RequestType::AUTO_SELECTED,
+                                          m_host_triplet,
+                                          std::move(p_vnode->deps));
                     std::vector<DepSpec> deps;
                     for (auto&& f : ipa.feature_list)
                     {
@@ -1934,7 +1953,7 @@ namespace vcpkg::Dependencies
 
                                 if (auto cons = maybe_cons.get())
                                 {
-                                    deps.emplace_back(DepSpec{std::move(dep_spec), std::move(*cons)});
+                                    deps.emplace_back(DepSpec{std::move(dep_spec), std::move(*cons), dep.features});
                                 }
                                 else
                                 {
@@ -1969,7 +1988,7 @@ namespace vcpkg::Dependencies
 
             for (auto&& root : m_roots)
             {
-                if (auto err = push(root.spec, root.ver, toplevel))
+                if (auto err = push(root.spec, root.ver, toplevel, root.features))
                 {
                     return std::move(*err.get());
                 }
@@ -1988,7 +2007,7 @@ namespace vcpkg::Dependencies
                     {
                         auto dep = std::move(back.deps.back());
                         back.deps.pop_back();
-                        if (auto err = push(dep.spec, dep.ver, back.ipa.spec))
+                        if (auto err = push(dep.spec, dep.ver, back.ipa.spec, dep.features))
                         {
                             return std::move(*err.get());
                         }

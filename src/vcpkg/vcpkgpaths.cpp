@@ -31,7 +31,7 @@ namespace
         if (option)
         {
             // input directories must exist, so we use canonical
-            return filesystem.almost_canonical(li, vcpkg::u8path(*option));
+            return filesystem.almost_canonical(vcpkg::u8path(*option), li);
         }
         else
         {
@@ -53,7 +53,7 @@ namespace
         if (option)
         {
             // output directories might not exist, so we use merely absolute
-            return filesystem.absolute(li, vcpkg::u8path(*option));
+            return filesystem.absolute(vcpkg::u8path(*option), li);
         }
         else
         {
@@ -164,7 +164,7 @@ namespace vcpkg
         }
 
         auto path_to_config = config_dir / vcpkg::u8path("vcpkg-configuration.json");
-        if (!fs.exists(path_to_config))
+        if (!fs.exists(path_to_config, IgnoreErrors{}))
         {
             return {};
         }
@@ -196,14 +196,14 @@ namespace vcpkg
                         Metrics::g_metrics.lock()->track_property("X_VCPKG_REGISTRIES_CACHE", "defined");
                         auto path = vcpkg::u8path(*p_str);
                         path.make_preferred();
-                        const auto status = stdfs::status(path);
-                        if (!stdfs::exists(status))
+                        const auto status = get_real_filesystem().status(path, VCPKG_LINE_INFO);
+                        if (!vcpkg::exists(status))
                         {
                             return {"Path to X_VCPKG_REGISTRIES_CACHE does not exist: " + vcpkg::u8string(path),
                                     expected_right_tag};
                         }
 
-                        if (!stdfs::is_directory(status))
+                        if (!vcpkg::is_directory(status))
                         {
                             return {"Value of environment variable X_VCPKG_REGISTRIES_CACHE is not a directory: " +
                                         vcpkg::u8string(path),
@@ -292,15 +292,17 @@ namespace vcpkg
 
         if (args.vcpkg_root_dir)
         {
-            root = filesystem.almost_canonical(VCPKG_LINE_INFO, vcpkg::u8path(*args.vcpkg_root_dir));
+            root = filesystem.almost_canonical(vcpkg::u8path(*args.vcpkg_root_dir), VCPKG_LINE_INFO);
         }
         else
         {
-            root = filesystem.find_file_recursively_up(original_cwd, ".vcpkg-root");
+            root = filesystem.find_file_recursively_up(original_cwd, ".vcpkg-root", VCPKG_LINE_INFO);
             if (root.empty())
             {
                 root = filesystem.find_file_recursively_up(
-                    filesystem.almost_canonical(VCPKG_LINE_INFO, get_exe_path_of_current_process()), ".vcpkg-root");
+                    filesystem.almost_canonical(get_exe_path_of_current_process(), VCPKG_LINE_INFO),
+                    ".vcpkg-root",
+                    VCPKG_LINE_INFO);
             }
         }
 
@@ -313,11 +315,12 @@ namespace vcpkg
             if (args.manifest_root_dir)
             {
                 manifest_root_dir =
-                    filesystem.almost_canonical(VCPKG_LINE_INFO, vcpkg::u8path(*args.manifest_root_dir));
+                    filesystem.almost_canonical(vcpkg::u8path(*args.manifest_root_dir), VCPKG_LINE_INFO);
             }
             else
             {
-                manifest_root_dir = filesystem.find_file_recursively_up(original_cwd, vcpkg::u8path("vcpkg.json"));
+                manifest_root_dir =
+                    filesystem.find_file_recursively_up(original_cwd, vcpkg::u8path("vcpkg.json"), VCPKG_LINE_INFO);
             }
         }
 
@@ -345,7 +348,9 @@ namespace vcpkg
 
             if (ec)
             {
-                if (ec == std::errc::device_or_resource_busy || args.ignore_lock_failures.value_or(false))
+                bool is_already_locked = ec == std::errc::device_or_resource_busy;
+                bool allow_errors = args.ignore_lock_failures.value_or(false);
+                if (is_already_locked || !allow_errors)
                 {
                     vcpkg::printf(
                         Color::error, "Failed to take the filesystem lock on %s:\n", vcpkg::u8string(vcpkg_lock));
@@ -408,11 +413,11 @@ namespace vcpkg
         if (args.default_visual_studio_path)
         {
             m_pimpl->default_vs_path =
-                filesystem.almost_canonical(VCPKG_LINE_INFO, vcpkg::u8path(*args.default_visual_studio_path));
+                filesystem.almost_canonical(vcpkg::u8path(*args.default_visual_studio_path), VCPKG_LINE_INFO);
         }
 
-        triplets = filesystem.almost_canonical(VCPKG_LINE_INFO, root / vcpkg::u8path("triplets"));
-        community_triplets = filesystem.almost_canonical(VCPKG_LINE_INFO, triplets / vcpkg::u8path("community"));
+        triplets = filesystem.almost_canonical(root / vcpkg::u8path("triplets"), VCPKG_LINE_INFO);
+        community_triplets = filesystem.almost_canonical(triplets / vcpkg::u8path("community"), VCPKG_LINE_INFO);
 
         tools = downloads / vcpkg::u8path("tools");
         buildsystems = scripts / vcpkg::u8path("buildsystems");
@@ -436,12 +441,12 @@ namespace vcpkg
         versions_work_tree = versioning_tmp / vcpkg::u8path("versions-worktree");
         versions_output = versioning_output / vcpkg::u8path("versions");
 
-        ports_cmake = filesystem.almost_canonical(VCPKG_LINE_INFO, scripts / vcpkg::u8path("ports.cmake"));
+        ports_cmake = filesystem.almost_canonical(scripts / vcpkg::u8path("ports.cmake"), VCPKG_LINE_INFO);
 
         for (auto&& overlay_triplets_dir : args.overlay_triplets)
         {
             m_pimpl->triplets_dirs.emplace_back(
-                filesystem.almost_canonical(VCPKG_LINE_INFO, vcpkg::u8path(overlay_triplets_dir)));
+                filesystem.almost_canonical(vcpkg::u8path(overlay_triplets_dir), VCPKG_LINE_INFO));
         }
         m_pimpl->triplets_dirs.emplace_back(triplets);
         m_pimpl->triplets_dirs.emplace_back(community_triplets);
@@ -485,14 +490,12 @@ namespace vcpkg
             Filesystem& fs = this->get_filesystem();
             for (auto&& triplets_dir : m_pimpl->triplets_dirs)
             {
-                for (auto&& path : fs.get_files_non_recursive(triplets_dir))
+                for (auto&& path : fs.get_regular_files_non_recursive(triplets_dir, VCPKG_LINE_INFO))
                 {
-                    if (vcpkg::is_regular_file(fs.status(VCPKG_LINE_INFO, path)))
-                    {
-                        output.emplace_back(TripletFile(vcpkg::u8string(path.stem().filename()), triplets_dir));
-                    }
+                    output.emplace_back(TripletFile(vcpkg::u8string(path.stem().filename()), triplets_dir));
                 }
             }
+
             return output;
         });
     }
@@ -502,7 +505,7 @@ namespace vcpkg
         return m_pimpl->cmake_script_hashes.get_lazy([this]() -> std::map<std::string, std::string> {
             auto& fs = this->get_filesystem();
             std::map<std::string, std::string> helpers;
-            auto files = fs.get_files_non_recursive(this->scripts / vcpkg::u8path("cmake"));
+            auto files = fs.get_regular_files_non_recursive(this->scripts / vcpkg::u8path("cmake"), VCPKG_LINE_INFO);
             for (auto&& file : files)
             {
                 helpers.emplace(vcpkg::u8string(file.stem()),
@@ -592,7 +595,7 @@ namespace vcpkg
                 for (const auto& triplet_dir : m_pimpl->triplets_dirs)
                 {
                     auto path = triplet_dir / (triplet.canonical_name() + ".cmake");
-                    if (this->get_filesystem().exists(path))
+                    if (this->get_filesystem().exists(path, IgnoreErrors{}))
                     {
                         return path;
                     }
@@ -641,12 +644,13 @@ namespace vcpkg
             return {Strings::trim(std::move(output.output)), expected_left_tag};
         }
     }
-    std::string VcpkgPaths::get_current_git_sha_message() const
+    std::string VcpkgPaths::get_current_git_sha_baseline_message() const
     {
         auto maybe_cur_sha = get_current_git_sha();
         if (auto p_sha = maybe_cur_sha.get())
         {
-            return Strings::concat("The current commit is \"", *p_sha, '"');
+            return Strings::concat(
+                "You can use the current commit as a baseline, which is:\n    \"builtin-baseline\": \"", *p_sha, '"');
         }
         else
         {
@@ -687,9 +691,9 @@ namespace vcpkg
             return Strings::format("Error: Couldn't get local treeish objects for ports.\n%s", output.output);
 
         std::map<std::string, std::string, std::less<>> ret;
-        auto lines = Strings::split(output.output, '\n');
+        const auto lines = Strings::split(output.output, '\n');
         // The first line of the output is always the parent directory itself.
-        for (auto line : lines)
+        for (auto&& line : lines)
         {
             // The default output comes in the format:
             // <mode> SP <type> SP <object> TAB <file>
@@ -716,7 +720,7 @@ namespace vcpkg
         const path destination_parent = this->baselines_output / vcpkg::u8path(commit_sha);
         path destination = destination_parent / vcpkg::u8path("baseline.json");
 
-        if (!fs.exists(destination))
+        if (!fs.exists(destination, IgnoreErrors{}))
         {
             const path destination_tmp = destination_parent / vcpkg::u8path("baseline.json.tmp");
             auto treeish = Strings::concat(commit_sha, ":versions/baseline.json");
@@ -756,9 +760,10 @@ namespace vcpkg
             }
             else
             {
-                return {Strings::format("Error: while checking out baseline '%s':\n%s\nThis may be fixed by updating "
-                                        "vcpkg to the latest master via `git pull`.",
-                                        treeish,
+                return {Strings::format("Error: while checking out baseline from commit '%s' at subpath "
+                                        "'versions/baseline.json':\n%s\nThis may be fixed by updating vcpkg to the "
+                                        "latest master via `git pull` or fetching commits via `git fetch`.",
+                                        commit_sha,
                                         maybe_contents.error()),
                         expected_right_tag};
             }
@@ -777,7 +782,7 @@ namespace vcpkg
          */
         Filesystem& fs = get_filesystem();
         path destination = this->versions_output / vcpkg::u8path(port_name) / vcpkg::u8path(git_tree);
-        if (fs.exists(destination))
+        if (fs.exists(destination, IgnoreErrors{}))
         {
             return destination;
         }
@@ -978,7 +983,7 @@ namespace vcpkg
         fs.create_directories(m_pimpl->registries_git_trees, VCPKG_LINE_INFO);
 
         auto git_tree_final = m_pimpl->registries_git_trees / vcpkg::u8path(object);
-        if (fs.exists(git_tree_final))
+        if (fs.exists(git_tree_final, IgnoreErrors{}))
         {
             return std::move(git_tree_final);
         }
@@ -1010,7 +1015,7 @@ namespace vcpkg
 
         auto untar_output = cmd_execute_and_capture_output(untar, InWorkingDirectory{git_tree_temp});
         // Attempt to remove temporary files, though non-critical.
-        fs.remove(git_tree_temp_tar, ignore_errors);
+        fs.remove(git_tree_temp_tar, IgnoreErrors{});
         if (untar_output.exit_code != 0)
         {
             return {Strings::format("cmake's untar failed with message:\n%s", untar_output.output), expected_right_tag};
@@ -1019,7 +1024,7 @@ namespace vcpkg
         std::error_code ec;
         fs.rename(git_tree_temp, git_tree_final, ec);
 
-        if (fs.exists(git_tree_final))
+        if (fs.exists(git_tree_final, IgnoreErrors{}))
         {
             return git_tree_final;
         }
@@ -1120,7 +1125,7 @@ namespace vcpkg
             Checks::check_exit(VCPKG_LINE_INFO,
                                !candidates.empty(),
                                "Could not find Visual Studio instance at %s.",
-                               generic_u8string(vs_root_path));
+                               u8string(vs_root_path));
         }
 
         Checks::check_exit(VCPKG_LINE_INFO, !candidates.empty(), "No suitable Visual Studio instances were found");

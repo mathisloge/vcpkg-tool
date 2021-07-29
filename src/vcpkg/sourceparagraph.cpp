@@ -566,7 +566,7 @@ namespace vcpkg
         {
             r.required_object_field(type_name, obj, NAME, name, Json::IdentifierDeserializer::instance);
 
-            auto schemed_version = visit_required_schemed_deserializer(type_name, r, obj);
+            auto schemed_version = visit_required_schemed_deserializer(type_name, r, obj, true);
             version = schemed_version.versiont.text();
             version_scheme = schemed_version.scheme;
             port_version = schemed_version.versiont.port_version();
@@ -932,9 +932,11 @@ namespace vcpkg
 
             static Json::StringDeserializer url_deserializer{"a url"};
 
-            constexpr static StringView inner_type_name = "vcpkg.json";
-            DependencyOverrideDeserializer::visit_impl(
-                inner_type_name, r, obj, spgh->name, spgh->version, spgh->version_scheme, spgh->port_version);
+            r.required_object_field(type_name(), obj, NAME, spgh->name, Json::IdentifierDeserializer::instance);
+            auto schemed_version = visit_required_schemed_deserializer(type_name(), r, obj, false);
+            spgh->version = schemed_version.versiont.text();
+            spgh->version_scheme = schemed_version.scheme;
+            spgh->port_version = schemed_version.versiont.port_version();
 
             r.optional_object_field(obj, MAINTAINERS, spgh->maintainers, Json::ParagraphDeserializer::instance);
             r.optional_object_field(obj, DESCRIPTION, spgh->description, Json::ParagraphDeserializer::instance);
@@ -1088,7 +1090,7 @@ namespace vcpkg
                     Metrics::g_metrics.lock()->track_property("error-versioning-no-baseline", "defined");
                     return Strings::concat(
                         vcpkg::u8string(origin),
-                        " was rejected because it uses \"version>=\" without setting a \"builtin-baseline\".\n",
+                        " was rejected because it uses \"version>=\" and does not have a \"builtin-baseline\".\n",
                         s_extended_help);
                 }
 
@@ -1097,7 +1099,7 @@ namespace vcpkg
                     Metrics::g_metrics.lock()->track_property("error-versioning-no-baseline", "defined");
                     return Strings::concat(
                         vcpkg::u8string(origin),
-                        " was rejected because it uses \"overrides\" without setting a \"builtin-baseline\".\n",
+                        " was rejected because it uses \"overrides\" and does not have a \"builtin-baseline\".\n",
                         s_extended_help);
                 }
             }

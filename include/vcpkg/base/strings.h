@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vcpkg/base/cstringview.h>
+#include <vcpkg/base/lineinfo.h>
 #include <vcpkg/base/optional.h>
 #include <vcpkg/base/pragmas.h>
 #include <vcpkg/base/stringliteral.h>
@@ -52,6 +53,13 @@ namespace vcpkg::Strings::details
     inline void append_internal(std::string& into, const char* v) { into.append(v); }
     inline void append_internal(std::string& into, const std::string& s) { into.append(s); }
     inline void append_internal(std::string& into, StringView s) { into.append(s.begin(), s.end()); }
+    inline void append_internal(std::string& into, LineInfo ln)
+    {
+        into.append(ln.file_name);
+        into.push_back(':');
+        into += std::to_string(ln.line_number);
+        into.push_back(':');
+    }
 
     template<class T, class = decltype(std::declval<const T&>().to_string(std::declval<std::string&>()))>
     void append_internal(std::string& into, const T& t)
@@ -65,10 +73,10 @@ namespace vcpkg::Strings::details
         to_string(into, t);
     }
 
-    struct tolower_char
+    constexpr struct
     {
-        char operator()(char c) const { return (c < 'A' || c > 'Z') ? c : c - 'A' + 'a'; }
-    };
+        char operator()(char c) const noexcept { return (c < 'A' || c > 'Z') ? c : c - 'A' + 'a'; }
+    } tolower_char;
 }
 
 namespace vcpkg::Strings
@@ -136,13 +144,14 @@ namespace vcpkg::Strings
     template<class It>
     void ascii_to_lowercase(It first, It last)
     {
-        std::transform(first, last, first, details::tolower_char{});
+        std::transform(first, last, first, details::tolower_char);
     }
     std::string ascii_to_lowercase(std::string&& s);
 
     std::string ascii_to_uppercase(std::string&& s);
 
     bool case_insensitive_ascii_starts_with(StringView s, StringView pattern);
+    bool case_insensitive_ascii_ends_with(StringView s, StringView pattern);
     bool ends_with(StringView s, StringView pattern);
     bool starts_with(StringView s, StringView pattern);
 
@@ -297,6 +306,7 @@ namespace vcpkg::Strings
     const char* search(StringView haystack, StringView needle);
 
     bool contains(StringView haystack, StringView needle);
+    bool contains(StringView haystack, char needle);
 
     // base 32 encoding, following IETC RFC 4648
     std::string b32_encode(std::uint64_t x) noexcept;
